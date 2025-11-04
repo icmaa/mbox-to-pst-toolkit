@@ -398,9 +398,10 @@ class PstRouter:
         return self.cur["store"], self.cur["root"], self.cur["path"]
 
 def list_eml_files(root_dir):
-    """Return [(path, size)], total_bytes – recursively collects *.eml."""
+    """Return [(path, size, rel_dir)], total_bytes – recursively collects *.eml with relative folder paths."""
     files = []
     total_bytes = 0
+    root_dir = os.path.normpath(root_dir)
     for base, _, fnames in os.walk(root_dir):
         for fn in fnames:
             if fn.lower().endswith(".eml"):
@@ -409,10 +410,24 @@ def list_eml_files(root_dir):
                     sz = os.path.getsize(p)
                 except OSError:
                     sz = 0
-                files.append((p, sz))
+                rel_dir = os.path.relpath(base, root_dir)
+                if rel_dir == ".":
+                    rel_dir = ""
+                files.append((p, sz, rel_dir))
                 total_bytes += sz
     files.sort()
     return files, total_bytes
+
+def ensure_folder_path(root, path_parts):
+    """Recursively create nested folders and return the deepest folder."""
+    current = root
+    for part in path_parts:
+        if part:
+            try:
+                current = current.Folders.Item(part)
+            except Exception:
+                current = current.Folders.Add(part)
+    return current
 
 def main():
     ap = argparse.ArgumentParser(description="Import EML → PST (Outlook/MAPI) with split & progress")
@@ -458,7 +473,7 @@ def main():
     current_pst = None
 
     try:
-        for (path, sz) in files:
+        for (path, sz, rel_dir) in files:
             # Read raw bytes & parse message
             try:
                 with open(path, "rb") as f:
@@ -487,11 +502,13 @@ def main():
                 current_pst = pst_path
                 print(f"\nCURRENT PST: {current_pst}")
 
-            # Ensure inner folder exists
+            # Ensure folder hierarchy exists (pst_root + relative path from source)
             try:
                 dest = root.Folders.Item(args.pst_root)
             except Exception:
                 dest = root.Folders.Add(args.pst_root)
+            if rel_dir:
+                dest = ensure_folder_path(dest, rel_dir.split(os.sep))
 
             # Create item directly in destination folder, add attachments, save
             try:
